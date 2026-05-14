@@ -416,10 +416,10 @@ class RobotVisualizer:
                         if m != 0])
         self.status_labels["motors"].config(text=f"{motors_on} running")
         
-        # Calculate cleaned percentage
+        # Calculate cleaned percentage based on reachable cells only
         total_cells = sum(len(points) for points in self.cleaned_cells.values())
-        total_possible = 3 * 10 * 10  # 3 rooms, 10x10 grid each
-        cleaned_pct = (total_cells / total_possible) * 100
+        total_possible = sum(len(self.reachable_cells.get(r, set())) for r in self.rooms)
+        cleaned_pct = (total_cells / total_possible * 100) if total_possible > 0 else 0
         self.status_labels["cleaned"].config(text=f"{cleaned_pct:.1f}%")
         
         self.root.update()
