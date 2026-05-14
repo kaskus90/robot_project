@@ -56,9 +56,13 @@ class RobotVisualizer:
         top_frame.pack(side=tk.TOP, fill=tk.X)
         top_frame.pack_propagate(False)
         
-        title_label = Label(top_frame, text="🏠 ROOMBA VISUAL SIMULATOR", 
+        title_label = Label(top_frame, text="🏠 ROOMBA VISUAL SIMULATOR",
                            font=("Arial", 16, "bold"), bg="#333333", fg="white")
         title_label.pack(side=tk.LEFT, padx=20, pady=10)
+
+        hint_label = Label(top_frame, text="🖱️ Click on a room to place/remove obstacles",
+                           font=("Arial", 10), bg="#333333", fg="#aaaaaa")
+        hint_label.pack(side=tk.LEFT, padx=20, pady=10)
         
         # Main content frame
         content_frame = Frame(self.root, bg="#f0f0f0")
@@ -103,6 +107,8 @@ class RobotVisualizer:
             
             self.status_labels[key] = status_label
         
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+
         # Draw initial map
         self.draw_map()
     
@@ -135,9 +141,18 @@ class RobotVisualizer:
         dock_y1 = dock_y * self.scale - 5
         dock_x2 = dock_x * self.scale + 5
         dock_y2 = dock_y * self.scale + 5
-        self.canvas.create_rectangle(dock_x1, dock_y1, dock_x2, dock_y2, 
+        self.canvas.create_rectangle(dock_x1, dock_y1, dock_x2, dock_y2,
                                      fill="#FFD700", outline="#FF6600", width=2)
         self.canvas.create_text(dock_x, dock_y, text="🏠", font=("Arial", 12))
+
+        # Draw obstacles
+        for obs_x, obs_y in self.controller.home_map.obstacles:
+            x1 = obs_x * self.scale
+            y1 = obs_y * self.scale
+            x2 = (obs_x + self.grid_size) * self.scale
+            y2 = (obs_y + self.grid_size) * self.scale
+            self.canvas.create_rectangle(x1, y1, x2, y2, fill="#CC2222", outline="#880000", width=1)
+            self.canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, text="✖", font=("Arial", 8, "bold"), fill="white")
     
     def draw_grid(self, room_key, room):
         """Draw cleaned grid cells for a room"""
@@ -173,6 +188,24 @@ class RobotVisualizer:
                                fill="#FF6600", outline="#FF3300", width=2)
         self.canvas.create_text(robot_x, robot_y, text="🤖", font=("Arial", 12))
     
+    def on_canvas_click(self, event):
+        """Place or remove an obstacle where the user clicked"""
+        grid_x = int(event.x / self.scale / self.grid_size) * self.grid_size
+        grid_y = int(event.y / self.scale / self.grid_size) * self.grid_size
+
+        # Only allow obstacles inside rooms
+        if self.controller.home_map.get_room_at(grid_x, grid_y) is None:
+            return
+
+        if self.controller.home_map.is_obstacle(grid_x, grid_y):
+            self.controller.home_map.remove_obstacle(grid_x, grid_y)
+        else:
+            self.controller.home_map.add_obstacle(grid_x, grid_y)
+
+        self.draw_map()
+        rx, ry = self.controller.robot.position
+        self.draw_robot(rx, ry)
+
     def start_cleaning(self):
         """Start cleaning and animation loop"""
         self.controller.cleaning_mode = True
@@ -187,8 +220,11 @@ class RobotVisualizer:
         """Animate cleaning of rooms"""
         if not self.running or room_index >= len(rooms):
             if self.running:
-                # All rooms done
+                # All rooms done - return to charging dock
                 self.controller.go_to_dock()
+                dock_x, dock_y = self.controller.home_map.get_dock_position()
+                self.draw_map()
+                self.draw_robot(dock_x, dock_y)
                 self.update_status()
                 self.controller.stop()
             return
@@ -216,7 +252,23 @@ class RobotVisualizer:
             return
         
         x, y = grid_points[point_index]
-        
+
+        # Obstacle detected — sonar triggers, robot skips this cell
+        if self.controller.home_map.is_obstacle(x, y):
+            self.controller.robot.sonar.measure(15)
+            self.controller.robot.obstacle_detected = True
+            print(f"⚠️  Obstacle at ({x},{y}) — sonar: 15cm — skipping cell")
+            self.draw_map()
+            rx, ry = self.controller.robot.position
+            self.draw_robot(rx, ry)
+            self.update_status()
+            self.root.after(200, lambda: self.clean_grid_animation(
+                room_name, room, grid_points, point_index + 1, rooms, room_index, complete_room=complete_room))
+            return
+
+        self.controller.robot.sonar.measure(100)
+        self.controller.robot.obstacle_detected = False
+
         # Update cleaned cells
         self.cleaned_cells[room_name].add((x, y))
         
@@ -243,6 +295,9 @@ class RobotVisualizer:
                 room_name, room, grid_points, point_index + 1, rooms, room_index, complete_room=True))
             return
         
+        # Save real position so obstacle handler can read it correctly
+        self.controller.robot.position = (x, y)
+
         # Draw map and robot
         self.draw_map()
         self.draw_robot(x, y)

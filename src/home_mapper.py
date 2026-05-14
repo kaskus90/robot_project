@@ -8,6 +8,8 @@ class HomeMap:
     
     def __init__(self):
         """Initialize home map with room coordinates"""
+        self.obstacles = set()  # Set of (x, y) grid coords blocked by obstacles
+
         self.rooms = {
             "living_room": {
                 "name": "Living Room",
@@ -63,6 +65,24 @@ class HomeMap:
         """Get charging dock position"""
         return (210, 50)  # Near kitchen
     
+    def add_obstacle(self, x, y):
+        self.obstacles.add((x, y))
+
+    def remove_obstacle(self, x, y):
+        self.obstacles.discard((x, y))
+
+    def is_obstacle(self, x, y):
+        return (x, y) in self.obstacles
+
+    def get_room_at(self, x, y):
+        """Return room key if (x,y) is inside a room, else None"""
+        for room_key, room in self.rooms.items():
+            x_start, x_end = room["x_range"]
+            y_start, y_end = room["y_range"]
+            if x_start <= x < x_end and y_start <= y < y_end:
+                return room_key
+        return None
+
     def print_map(self):
         """Print home layout"""
         print("\n🏠 HOME MAP:")
