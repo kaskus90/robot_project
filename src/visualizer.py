@@ -6,6 +6,9 @@ Uses tkinter for 2D visualization of the house and robot
 import tkinter as tk
 from tkinter import Canvas, Label, Frame
 import time
+import os
+from datetime import datetime
+from PIL import ImageGrab
 from controller import RobotController
 from pathfinder import PathfindingAgent
 
@@ -68,6 +71,11 @@ class RobotVisualizer:
         hint_label = Label(top_frame, text="🖱️ Click on a room to place/remove obstacles",
                            font=("Arial", 10), bg="#333333", fg="#aaaaaa")
         hint_label.pack(side=tk.LEFT, padx=20, pady=10)
+
+        screenshot_btn = tk.Button(top_frame, text="📷 Screenshot", font=("Arial", 10, "bold"),
+                                   bg="#4CAF50", fg="white", relief=tk.RAISED, padx=10,
+                                   command=self.take_screenshot)
+        screenshot_btn.pack(side=tk.RIGHT, padx=20, pady=10)
         
         # Main content frame
         content_frame = Frame(self.root, bg="#f0f0f0")
@@ -424,6 +432,21 @@ class RobotVisualizer:
         
         self.root.update()
     
+    def take_screenshot(self):
+        """Capture the window and save it to the screens folder"""
+        self.root.update()
+        x = self.root.winfo_rootx()
+        y = self.root.winfo_rooty()
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        screens_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "screens")
+        os.makedirs(screens_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(screens_dir, f"simulation_{timestamp}.png")
+        img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+        img.save(path)
+        print(f"📷 Screenshot saved: {path}")
+
     def on_closing(self):
         """Handle window close"""
         self.running = False
