@@ -139,6 +139,11 @@ class Robot:
         """Simulate battery drain"""
         self.battery_level = max(0, self.battery_level - amount)
         return self.battery_level
+
+    def charge(self, amount=10):
+        """Charge battery by amount percent"""
+        self.battery_level = min(100, self.battery_level + amount)
+        return self.battery_level
     
     def read_sonar(self):
         """Read distance sensor"""

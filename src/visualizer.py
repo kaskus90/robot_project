@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import Canvas, Label, Frame
 import time
 from controller import RobotController
+from pathfinder import PathfindingAgent
 
 
 class RobotVisualizer:
@@ -36,10 +37,14 @@ class RobotVisualizer:
             "bedroom": {"color": "#F2E6FF", "name": "Bedroom", "x": 0, "y": 100, "w": 100, "h": 100}
         }
         
-        # Track cleaned cells
+        self.pathfinder = PathfindingAgent(self.grid_size)
+
+        # Track cleaned cells and reachable cells per room
         self.cleaned_cells = {}
+        self.reachable_cells = {}
         for room in self.rooms:
             self.cleaned_cells[room] = set()
+            self.reachable_cells[room] = set()
         
         # Create GUI elements
         self.create_widgets()
@@ -188,6 +193,45 @@ class RobotVisualizer:
                                fill="#FF6600", outline="#FF3300", width=2)
         self.canvas.create_text(robot_x, robot_y, text="🤖", font=("Arial", 12))
     
+    def animate_charging(self, on_complete):
+        """Animate battery charging at dock, then call on_complete"""
+        dock_x, dock_y = self.controller.home_map.get_dock_position()
+
+        def charge_step():
+            if self.controller.robot.battery_level >= 100:
+                self.controller.robot.docked = False
+                on_complete()
+                return
+            self.controller.robot.charge(10)
+            self.draw_map()
+            self.draw_robot(dock_x, dock_y)
+            self.update_status()
+            self.root.after(120, charge_step)
+
+        charge_step()
+
+    def compute_reachable(self, room_name, grid_points):
+        """BFS from first open cell — marks every cell the robot can physically reach"""
+        obstacles = self.controller.home_map.obstacles
+        grid_set = set(grid_points)
+
+        start = next((gp for gp in grid_points if gp not in obstacles), None)
+        if not start:
+            self.reachable_cells[room_name] = set()
+            return
+
+        reachable = {start}
+        queue = [start]
+        while queue:
+            x, y = queue.pop(0)
+            for nx, ny in [(x + self.grid_size, y), (x - self.grid_size, y),
+                           (x, y + self.grid_size), (x, y - self.grid_size)]:
+                if (nx, ny) in grid_set and (nx, ny) not in obstacles and (nx, ny) not in reachable:
+                    reachable.add((nx, ny))
+                    queue.append((nx, ny))
+
+        self.reachable_cells[room_name] = reachable
+
     def on_canvas_click(self, event):
         """Place or remove an obstacle where the user clicked"""
         grid_x = int(event.x / self.scale / self.grid_size) * self.grid_size
@@ -201,6 +245,11 @@ class RobotVisualizer:
             self.controller.home_map.remove_obstacle(grid_x, grid_y)
         else:
             self.controller.home_map.add_obstacle(grid_x, grid_y)
+
+        # Recompute reachability for all rooms after obstacle change
+        for rname in self.rooms:
+            gpts = self.controller.home_map.get_cleaning_grid(rname)
+            self.compute_reachable(rname, gpts)
 
         self.draw_map()
         rx, ry = self.controller.robot.position
@@ -234,7 +283,13 @@ class RobotVisualizer:
         
         self.controller.navigate_to_room(room_name)
         grid_points = self.controller.home_map.get_cleaning_grid(room_name)
-        
+
+        self.compute_reachable(room_name, grid_points)
+
+        first_valid = next((gp for gp in grid_points if not self.controller.home_map.is_obstacle(*gp)), None)
+        if first_valid:
+            self.controller.robot.position = first_valid
+
         # Keep cleaning this room until done (handle multiple dock cycles)
         self.clean_room_completely(room_name, room, grid_points, 0, rooms, room_index)
     
@@ -253,17 +308,48 @@ class RobotVisualizer:
         
         x, y = grid_points[point_index]
 
-        # Obstacle detected — sonar triggers, robot skips this cell
-        if self.controller.home_map.is_obstacle(x, y):
+        # Skip if obstacle or unreachable — navigate around walls to next cleanable cell
+        reachable = self.reachable_cells.get(room_name, set())
+        if self.controller.home_map.is_obstacle(x, y) or (x, y) not in reachable:
             self.controller.robot.sonar.measure(15)
             self.controller.robot.obstacle_detected = True
-            print(f"⚠️  Obstacle at ({x},{y}) — sonar: 15cm — skipping cell")
-            self.draw_map()
+
+            # Find next reachable, non-obstacle cell
+            next_index = point_index + 1
+            while next_index < len(grid_points):
+                nx, ny = grid_points[next_index]
+                if not self.controller.home_map.is_obstacle(nx, ny) and (nx, ny) in reachable:
+                    break
+                next_index += 1
+
+            if next_index >= len(grid_points):
+                self.controller.scheduler.advance_to_next_room()
+                self.root.after(500, lambda: self.clean_rooms_animation(rooms, room_index + 1))
+                return
+
+            goal = grid_points[next_index]
             rx, ry = self.controller.robot.position
-            self.draw_robot(rx, ry)
-            self.update_status()
-            self.root.after(200, lambda: self.clean_grid_animation(
-                room_name, room, grid_points, point_index + 1, rooms, room_index, complete_room=complete_room))
+            room_bounds = (room["x"], room["y"], room["x"] + room["w"], room["y"] + room["h"])
+            path = self.pathfinder.find_path((rx, ry), goal, self.controller.home_map.obstacles, room_bounds)
+
+            if not path:
+                self.root.after(50, lambda: self.clean_grid_animation(
+                    room_name, room, grid_points, next_index, rooms, room_index, complete_room=complete_room))
+                return
+
+            def follow_path(i):
+                if i >= len(path):
+                    self.root.after(50, lambda: self.clean_grid_animation(
+                        room_name, room, grid_points, next_index, rooms, room_index, complete_room=complete_room))
+                    return
+                px, py = path[i]
+                self.controller.robot.position = (px, py)
+                self.draw_map()
+                self.draw_robot(px, py)
+                self.root.update()
+                self.root.after(100, lambda i=i: follow_path(i + 1))
+
+            follow_path(0)
             return
 
         self.controller.robot.sonar.measure(100)
@@ -286,12 +372,13 @@ class RobotVisualizer:
                 room_name, room, grid_points, point_index + 1, rooms, room_index, complete_room=True))
             return
         
-        if self.controller.robot.battery_level < 15:
-            print(f"🔋 Battery low at point {point_index + 1}/{len(grid_points)}")
+        if self.controller.robot.battery_level < 50:
+            print(f"🔋 Battery at {self.controller.robot.battery_level:.0f}% — returning to dock to recharge")
             self.controller.go_to_dock()
-            self.update_status()
-            # Continue cleaning the SAME room after docking
-            self.root.after(1000, lambda: self.clean_grid_animation(
+            dock_x, dock_y = self.controller.home_map.get_dock_position()
+            self.draw_map()
+            self.draw_robot(dock_x, dock_y)
+            self.animate_charging(lambda: self.clean_grid_animation(
                 room_name, room, grid_points, point_index + 1, rooms, room_index, complete_room=True))
             return
         
