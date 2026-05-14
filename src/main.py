@@ -1,5 +1,6 @@
 """
-Główny program - uruchomienie systemu robota
+Main program - Roomba robot simulation
+Automatic cleaning scheduler and controller
 """
 
 from controller import RobotController
@@ -9,41 +10,47 @@ import time
 def main():
     print("""
     ╔════════════════════════════════════════╗
-    ║     SYSTEM ROBOTA MOBILNEGO v1.0      ║
-    ║   Nauka komunikacji HW ↔ SW           ║
+    ║         ROOMBA ROBOT SYSTEM v2.0       ║
+    ║    Automated Home Cleaning System      ║
+    ║   Learning HW ↔ SW Communication      ║
     ╚════════════════════════════════════════╝
     """)
     
-    # Inicjalizacja kontrolera
-    controller = RobotController()
+    # Initialize controller with cleaning schedule
+    # Cleans at 14:00 (2 PM) in all 3 rooms
+    controller = RobotController(
+        cleaning_hours=[14],
+        cleaning_rooms=["living_room", "kitchen", "bedroom"]
+    )
     
-    # Uruchomienie robota
+    # Start robot
     controller.start()
     
-    # Symulacja 20 iteracji (każda iteracja = ~1 sekunda)
+    # Run simulation - simulate 50 iterations
+    # In real application, this would run continuously
     try:
-        for iteration in range(1, 21):
-            print(f"\n{'='*50}")
-            print(f"ITERACJA {iteration}")
-            print(f"{'='*50}")
+        for iteration in range(1, 51):
+            print(f"\n{'='*60}")
+            print(f"ITERATION {iteration}")
+            print(f"{'='*60}")
             
-            # Aktualizacja robota
+            # Update robot state
             controller.update(iteration)
             
-            # Wyswietlenie statusu
-            time.sleep(0.3)  # Chwila na "rzeczywistą" pracę
+            # Display status
+            time.sleep(0.2)  # Time for "real work"
             controller.print_status()
             
-            # Czekanie przed następną iteracją
-            time.sleep(1.5)
+            # Wait before next iteration
+            time.sleep(1.0)
     
     except KeyboardInterrupt:
-        print("\n\n⛔ Przerwanie przez użytkownika!")
+        print("\n\n⛔ User interrupt!")
     
     finally:
-        # Zatrzymanie robota
+        # Stop robot
         controller.stop()
-        print("\n✓ Program zakończony pomyślnie!")
+        print("\n✓ Program completed successfully!")
 
 
 if __name__ == "__main__":
